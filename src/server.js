@@ -359,7 +359,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(cfg.port, '127.0.0.1', () => {
+server.listen(cfg.port, process.env.HOST || '0.0.0.0', () => {
   console.log(JSON.stringify({ at: new Date().toISOString(), listening: cfg.port, payTo: cfg.payTo, facilitator: cfg.facilitator, products: Object.values(PRODUCTS).map((p) => p.path) }));
 });
 
