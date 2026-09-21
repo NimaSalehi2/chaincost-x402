@@ -1,0 +1,17 @@
+{
+  "payTo": "0x3893efb327fd381e85d70c29021b7a1901221fd2",
+  "facilitator": "https://facilitator.ultravioletadao.xyz",
+  "network": "base",
+  "networkCaip2": "eip155:8453",
+  "asset": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "assetSymbol": "USDC",
+  "assetName": "USD Coin",
+  "assetVersion": "2",
+  "assetDecimals": 6,
+  "maxTimeoutSeconds": 60,
+  "port": 8402,
+  "operator": {
+    "name": "chaincost",
+    "contact": "via the / endpoint of this origin"
+  }
+}

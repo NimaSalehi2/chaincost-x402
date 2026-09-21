@@ -1,0 +1,16 @@
+{
+  "name": "chaincost-x402",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Paid x402 (HTTP 402 / USDC on Base) micro-endpoints: cross-chain gas/fee oracle, verifiable randomness, BTC fee tiers, URL->markdown extraction, token safety/risk.",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node test/e2e.js"
+  },
+  "dependencies": {
+    "ethers": "^6.17.0"
+  },
+  "license": "MIT"
+}
