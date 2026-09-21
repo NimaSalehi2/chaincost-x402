@@ -17,6 +17,8 @@ const path = require('path');
 
 const ethers = require(process.env.ETHERS_PATH || '/home/cryptonix/node_modules/ethers');
 const cfg = require(path.join(__dirname, '..', 'config.json'));
+const { PRODUCTS } = require(path.join(__dirname, '..', 'src', 'products'));
+const CATALOGUE = Object.values(PRODUCTS);
 
 const MOCK_PORT = Number(process.env.MOCK_PORT || 8433);
 const SERVER_PORT = Number(process.env.SERVER_PORT || 8432);
@@ -100,7 +102,7 @@ function mockFacilitator() {
       const isValid = recovered && recovered.toLowerCase() === String(auth.from).toLowerCase();
 
       if (endpoint === '/verify') {
-        seen.verify.push(body);
+        seen.verify.push({ ...body, __valid: Boolean(isValid) });
         return reply(200, isValid ? { isValid: true } : { isValid: false, invalidReason: 'invalid_signature', payer: auth.from });
       }
       if (endpoint === '/settle') {
@@ -214,13 +216,15 @@ async function main() {
     check('GET / is free prose listing /v1/gas', root.status === 200 && rootText.includes('/v1/gas'));
 
     const pricing = await (await fetch(BASE + '/pricing')).json();
-    check('GET /pricing lists 5 products with atomic prices', pricing.products.length === 5 && pricing.products.every((p) => /^[0-9]+$/.test(p.priceAtomic)));
+    check('GET /pricing lists every catalogue product with atomic prices',
+      pricing.products.length === CATALOGUE.length && pricing.products.every((p) => /^[0-9]+$/.test(p.priceAtomic)));
 
     const manifest = await (await fetch(BASE + '/.well-known/x402')).json();
     check('manifest is x402 v2 with CAIP-2 network', manifest.x402Version === 2 && manifest.resources[0].accepts[0].network === 'eip155:8453');
 
     const openapi = await (await fetch(BASE + '/openapi.json')).json();
-    check('openapi.json documents every paid route', Object.keys(openapi.paths).length === 7);
+    check('openapi.json documents every paid route',
+      CATALOGUE.every((p) => openapi.paths[p.path] && openapi.paths[p.path][p.method.toLowerCase()]));
 
     const junk = await fetch(BASE + '/nope');
     check('unknown route answers 404 without charging', junk.status === 404);
@@ -312,20 +316,33 @@ async function main() {
     const wrongMethod = await fetch(BASE + '/v1/extract');
     check('GET on a POST-only product answers 405', wrongMethod.status === 405);
 
+    // --- v1 paid call on the portfolio product (GET ?wallet=) ----------------
+    const prChal = await fetch(BASE + '/v1/portfolio-risk?wallet=0x1f984000000000000000000000000c71c29eEa5F');
+    check('unpaid GET /v1/portfolio-risk answers 402', prChal.status === 402);
+    const prPay = await signedPayment(1, '3000', { path: '/v1/portfolio-risk?wallet=0x1234' });
+    const prRes = await fetch(BASE + '/v1/portfolio-risk?wallet=0x1f984000000000000000000000000c71c29eEa5F', { headers: { [prPay.header]: prPay.value } });
+    const prBody = await prRes.json();
+    check('paid GET /v1/portfolio-risk returns 200 with a portfolio summary (fixture mode)',
+      prRes.status === 200 && Boolean(prBody.data && prBody.data.riskSummary)
+      && prBody.data.riskSummary.overallRiskLevel === 'high' && prBody.data.fixture === true);
+
     // --- protocol hygiene ------------------------------------------------
     check('all facilitator request bodies matched the documented shape',
       seen.shapeErrors.length === 0, seen.shapeErrors.join('; '));
-    check('four settlements reached the facilitator (random v1, token-risk v1, btc-fees v2, extract v1)',
-      seen.settle.length === 4);
+    check('five settlements reached the facilitator (random v1, token-risk v1, btc-fees v2, extract v1, portfolio-risk v1)',
+      seen.settle.length === 5);
     check('settle sent Idempotency-Key equal to the authorization nonce',
       seen.idempotencyKeys[0] === seen.settle[0].paymentPayload.payload.authorization.nonce);
     const negChecks = seen.verify.length;
-    check('no negative-case payment was ever forwarded to /verify', negChecks === 4, 'verify calls: ' + negChecks);
+    check('only validly signed payments addressed to us ever reached /verify',
+      negChecks === 5 && seen.verify.every((v) => v.__valid === true
+        && String(v.paymentPayload.payload.authorization.to).toLowerCase() === cfg.payTo.toLowerCase()),
+      'verify calls: ' + negChecks);
 
     const ledgerPath = path.join(__dirname, '..', 'data', 'settlements.jsonl');
     const ledgerLines = require('fs').readFileSync(ledgerPath, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l));
     check('settlement ledger recorded every paid call',
-      ledgerLines.length >= 4 && ledgerLines.every((l) => l.success === true),
+      ledgerLines.length >= 5 && ledgerLines.every((l) => l.success === true),
       'lines: ' + ledgerLines.length);
 
 

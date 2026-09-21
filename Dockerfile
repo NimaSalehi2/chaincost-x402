@@ -1,17 +1,15 @@
 FROM node:20-alpine
 
+ENV NODE_ENV=production
+
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm ci --only=production 2>/dev/null || npm install --production 2>/dev/null || true
+# Deterministic install from the committed lockfile (ethers comes from here).
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
 
-# ethers is a peer dependency loaded from /home/cryptonix/node_modules/ethers
-# In container, install it explicitly
-RUN npm install ethers@6
-
-COPY src/ src/
 COPY config.json ./
-COPY bin/ bin/
+COPY src/ src/
 
 EXPOSE 8402
 

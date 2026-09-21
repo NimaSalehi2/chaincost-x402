@@ -1,9 +1,27 @@
 # chaincost — live x402 seller (DO NOT DELETE)
 
-Public origin: https://mixed-memphis-luke-moses.trycloudflare.com
-(this hostname changes every time the cloudflared tunnel restarts)
+## Live origins (2026-09-22)
 
-## Processes (both must be alive)
+1. **PRIMARY — Railway (stable, use this):** https://chaincost-x402-production.up.railway.app
+   - project `chaincost-x402` / service `chaincost-x402` / environment `production`
+     (project id `9a75b783-ff4f-4a73-9d6b-abe9cc83fb64`, service id `959fb662-5af0-4ff9-a569-1f38eb5edacc`).
+   - Deploy flow: `git push` to `NimaSalehi2/chaincost-x402@main` → Railway GitHub integration
+     rebuilds the repo Dockerfile and redeploys (`reason: deploy`). No CLI needed; the local
+     Railway CLI cannot resolve `backboard.railway.com` from this WSL box (Bun resolver), but
+     `curl` to the GraphQL API works fine with `~/.config/railway/token`.
+   - **PORT=8402 MUST be set as a service variable.** Without it the deployment shows SUCCESS and
+     `deploymentStopped: false`, yet the domain answers `502 {"code":502,"message":"Application
+     failed to respond"}` — Railway's edge had no port to route to. Setting the variable triggers a
+     redeploy and fixes it (verified 2026-09-21 22:26 UTC).
+     Companion vars: `HOST=0.0.0.0`, `PUBLIC_BASE_URL=https://chaincost-x402-production.up.railway.app`,
+     `PAYTO`, `FACILITATOR_URL`.
+   - Verify: `curl -sS https://chaincost-x402-production.up.railway.app/health` → `ok:true`.
+
+2. **FALLBACK — local server + cloudflared tunnel (ephemeral hostname):**
+   https://mixed-memphis-luke-moses.trycloudflare.com
+   (this hostname changes every time the cloudflared tunnel restarts)
+
+## Local fallback processes (both must be alive)
 1. Seller server: `PORT=8402 node src/server.js` (binds 127.0.0.1:8402, serves HTTP with PUBLIC_BASE_URL unset — the tunnel's Host header flows through; resource URLs are built per-request from headers)
    logs: logs/server.log | ledger: data/settlements.jsonl | requests: data/requests.jsonl
 2. Cloudflare tunnel: `cloudflared tunnel --url http://127.0.0.1:8402 --no-autoupdate`
