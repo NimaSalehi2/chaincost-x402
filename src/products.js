@@ -582,6 +582,89 @@ async function portfolioRiskProduct(ctx) {
 }
 
 /** The catalogue. `price` is atomic USDC (6 decimals) — see config.json. */
+
+/** Product 7: daily market regime report — computed from public sources at call time. */
+async function marketReportProduct() {
+  if (FIXTURES) {
+    return {
+      asOf: new Date().toISOString(),
+      regime: {
+        btc: { close: 65000, ema50: 61000, ema200: 58000, trend: 'uptrend' },
+        eth: { close: 3200, ema50: 3050, ema200: 2900, trend: 'uptrend' },
+      },
+      sentiment: { fearGreed: { value: 62, classification: 'Greed' } },
+      global: { totalMarketCapUsd: 2.35e12, marketCapChange24hPct: 1.2, btcDominancePct: 54.1 },
+      btcFees: { fastest: 12, halfHour: 9, hour: 7, economy: 3 },
+      topMovers7d: { up: [{ symbol: 'SOL', changePct: 12.4 }], down: [{ symbol: 'DOGE', changePct: -5.1 }] },
+      methodology: 'EMA(50/200) on Kraken daily OHLC closes; sentiment from alternative.me; global caps and dominance from CoinGecko; fees from mempool.space; movers from the 25 largest coins by market cap (7d change).',
+      disclaimer: 'Computed from public data at call time. Informational only — not financial advice.',
+      fixture: true,
+    };
+  }
+  const [fngR, globR, feesR, btcR, ethR, mktR] = await Promise.allSettled([
+    jsonFetch('https://api.alternative.me/fng/?limit=1', {}, 7000),
+    jsonFetch('https://api.coingecko.com/api/v3/global', {}, 7000),
+    jsonFetch('https://mempool.space/api/v1/fees/recommended', {}, 7000),
+    krakenDailyCloses('XBTUSD'),
+    krakenDailyCloses('ETHUSD'),
+    jsonFetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=25&page=1&price_change_percentage=7d', {}, 9000),
+  ]);
+  const val = (r) => (r.status === 'fulfilled' ? r.value : null);
+
+  const fng = val(fngR);
+  const glob = val(globR);
+  const fees = val(feesR);
+  const btcCloses = val(btcR);
+  const ethCloses = val(ethR);
+  const mkt = val(mktR);
+
+  const regime = (closes) => {
+    if (!closes || closes.length < 200) return null;
+    const e = (n, seedFrom) => {
+      const k = 2 / (n + 1);
+      let ema = closes.slice(0, seedFrom).reduce((a, b) => a + b, 0) / seedFrom;
+      for (let i = seedFrom; i < closes.length; i++) ema = closes[i] * k + ema * (1 - k);
+      return round(ema, 2);
+    };
+    const close = round(closes[closes.length - 1], 2);
+    const ema50 = e(50, 50);
+    const ema200 = e(200, 200);
+    let trend = 'mixed';
+    if (close > ema200 && ema50 > ema200) trend = 'uptrend';
+    else if (close < ema200 && ema50 < ema200) trend = 'downtrend';
+    return { close, ema50, ema200, trend };
+  };
+
+  const coins = Array.isArray(mkt) ? mkt : [];
+  const with7d = coins.filter((c) => typeof c.price_change_percentage_7d_in_currency === 'number');
+  const byChange = with7d.slice().sort((a, b) => b.price_change_percentage_7d_in_currency - a.price_change_percentage_7d_in_currency);
+  const mover = (c) => ({ symbol: c.symbol ? c.symbol.toUpperCase() : null, changePct: round(c.price_change_percentage_7d_in_currency, 2) });
+
+  const out = {
+    asOf: new Date().toISOString(),
+    regime: { btc: regime(btcCloses), eth: regime(ethCloses) },
+    sentiment: fng && fng.data && fng.data[0] ? { fearGreed: { value: Number(fng.data[0].value), classification: fng.data[0].value_classification } } : null,
+    global: glob && glob.data ? {
+      totalMarketCapUsd: glob.data.total_market_cap ? glob.data.total_market_cap.usd : null,
+      marketCapChange24hPct: typeof glob.data.market_cap_change_percentage_24h_usd === 'number' ? round(glob.data.market_cap_change_percentage_24h_usd, 2) : null,
+      btcDominancePct: typeof glob.data.market_cap_percentage === 'object' && glob.data.market_cap_percentage ? round(glob.data.market_cap_percentage.btc, 2) : null,
+    } : null,
+    btcFees: fees ? { fastest: fees.fastestFee ?? null, halfHour: fees.halfHourFee ?? null, hour: fees.hourFee ?? null, economy: fees.economyFee ?? null } : null,
+    topMovers7d: with7d.length ? { up: byChange.slice(0, 3).map(mover), down: byChange.slice(-3).reverse().map(mover) } : null,
+    methodology: 'EMA(50/200) on Kraken daily OHLC closes; sentiment from alternative.me; global caps and dominance from CoinGecko; fees from mempool.space; movers from the 25 largest coins by market cap (7d change).',
+    disclaimer: 'Computed from public data at call time. Informational only — not financial advice.',
+  };
+  return out;
+}
+
+async function krakenDailyCloses(pair) {
+  const j = await jsonFetch('https://api.kraken.com/0/public/OHLC?pair=' + pair + '&interval=1440', {}, 9000);
+  if (j.error && j.error.length) throw new Error('kraken: ' + j.error[0]);
+  const key = Object.keys(j.result || {}).find((k) => k !== 'last');
+  if (!key) throw new Error('kraken: no ohlc series');
+  return j.result[key].map((row) => Number(row[4]));
+}
+
 const PRODUCTS = {
   gas: {
     id: 'gas',
@@ -643,7 +726,32 @@ const PRODUCTS = {
     description: 'GET /v1/portfolio-risk?wallet=0x... — wallet holdings & risk profile: real ERC-20 balances per chain from public Blockscout indexes, USD values from explorer rates, DEX liquidity checks on the largest holdings, concentration, and an overall risk level (low/medium/high/extreme). Covers Ethereum, Base, Arbitrum, Optimism and Polygon.',
     handler: (ctx) => portfolioRiskProduct(ctx),
   },
+  'market-report': {
+    id: 'market-report',
+    path: '/v1/market-report',
+    method: 'GET',
+    price: '50000',
+    priceUsd: '$0.05',
+    mimeType: 'application/json',
+    description: 'Daily crypto regime snapshot computed at call time: BTC/ETH daily trend state (50/200-day EMA cross with values), Fear & Greed index, global market cap + BTC dominance, current Bitcoin fee tiers, and top 7-day movers among the 25 largest coins. Unavailable fields are returned as null, never guessed.',
+    handler: () => marketReportProduct(),
+  },
 };
+
+
+/** Bazaar-style discovery schemas per product (rides in the 402 challenge). */
+const BAZAAR_SCHEMAS = {
+  gas: { input: { type: 'object', properties: {}, required: [] }, outputExample: { asOf: '2026-09-22T12:00:00Z', chains: [{ chain: 'base', gasGwei: 0.02, transferUsd: 0.0001 }], cheapest: { chain: 'base' } } },
+  random: { input: { type: 'object', properties: { nonce: { type: 'string', description: 'Optional string mixed into the derived sha256.' } }, required: [] }, outputExample: { round: 123456, randomness: '0x...', sha256: '<sha256 of randomness+nonce>', formula: 'sha256(hex(randomness) + nonce)' } },
+  'btc-fees': { input: { type: 'object', properties: {}, required: [] }, outputExample: { nextBlockSatVb: 12, halfHourSatVb: 9, hourSatVb: 7, economySatVb: 3, segwitSpendSats: 1692 } },
+  extract: { input: { type: 'object', properties: { url: { type: 'string', description: 'https:// URL of the page to convert to Markdown.' }, maxChars: { type: 'integer', description: 'Optional cap on returned markdown length.' } }, required: ['url'] }, outputExample: { url: 'https://example.com', markdown: '# Example page\n\nBody text...' } },
+  'token-risk': { input: { type: 'object', properties: { token: { type: 'string', description: 'EVM contract address (0x...).' }, chain: { type: 'string', description: 'ethereum|base|arbitrum|optimism|polygon (default ethereum).' } }, required: ['token'] }, outputExample: { token: '0x...', chain: 'base', symbol: 'UNI', market: { liquidityUsd: 420000, priceUsd: 8.5 }, contract: { verified: true }, riskLevel: 'low', flags: [] } },
+  'portfolio-risk': { input: { type: 'object', properties: { wallet: { type: 'string', description: 'EVM wallet address (0x...).' } }, required: ['wallet'] }, outputExample: { wallet: '0x...', holdings: [{ token: '0x...', symbol: 'WETH', balanceUsd: 1240.5 }], overallRisk: 'low' } },
+  'market-report': { input: { type: 'object', properties: {}, required: [] }, outputExample: { regime: { btc: { trend: 'uptrend', ema50: 61000, ema200: 58000 } }, sentiment: { fearGreed: { value: 62 } }, global: { btcDominancePct: 54.1 }, btcFees: { fastest: 12 } } },
+};
+for (const [id, bz] of Object.entries(BAZAAR_SCHEMAS)) {
+  if (PRODUCTS[id]) PRODUCTS[id].bazaar = bz;
+}
 
 module.exports = { PRODUCTS, CHAINS, htmlToMarkdown, isPrivateTarget };
 

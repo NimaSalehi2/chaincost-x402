@@ -79,6 +79,15 @@ function challenge(cfg, product, resourceUrl) {
       extra: o.extra,
     }],
   };
+  if (product.bazaar) {
+    v2.extensions = {
+      bazaar: {
+        input: product.bazaar.input,
+        inputSchema: product.bazaar.input,
+        output: { example: product.bazaar.outputExample },
+      },
+    };
+  }
   return { v1Body: v1, v2Header: b64encode(v2), v2 };
 }
 
