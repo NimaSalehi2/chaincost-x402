@@ -136,26 +136,35 @@ function manifestDoc(req) {
 function openapiDoc(req) {
   const base = baseUrl(req);
   const paths = {
-    '/health': { get: { summary: 'Liveness probe (free)', responses: { 200: { description: 'ok' } } } },
-    '/pricing': { get: { summary: 'Price list (free)', responses: { 200: { description: 'ok' } } } },
+    '/health': { get: { summary: 'Liveness probe (free)', security: [{ public: [] }], 'x-payment-info': { protocols: ['x402'], auth: { mode: 'public' } }, responses: { 200: { description: 'ok' } } } },
+    '/pricing': { get: { summary: 'Price list (free)', security: [{ public: [] }], 'x-payment-info': { protocols: ['x402'], auth: { mode: 'public' } }, responses: { 200: { description: 'ok' } } } },
   };
   for (const p of Object.values(PRODUCTS)) {
     paths[p.path] = {
       [p.method.toLowerCase()]: {
         summary: p.description,
         description: 'Paid via x402 (HTTP 402, USDC on Base). Price ' + p.priceUsd + ' per call.',
-        security: [{ x402: [] }],
+        security: [{ x402Payment: [] }],
+        'x-payment-info': {
+          protocols: ['x402'],
+          auth: { mode: 'payment', scheme: 'x402' },
+          price: { mode: 'fixed', currency: 'USD', amount: p.priceUsd.replace('$', '') },
+          network: cfg.networkCaip2,
+          asset: cfg.asset,
+          payTo: cfg.payTo,
+        },
         responses: { 200: { description: 'Paid response' }, 402: { description: 'Payment required' } },
       },
     };
   }
   return {
     openapi: '3.1.0',
-    info: { title: 'chaincost x402 endpoints', version: API_VERSION, description: 'Pay-per-call fee, randomness and extraction primitives. Payment is the API key: sign an EIP-3009 USDC authorization and retry.' },
+    info: { title: 'chaincost x402 endpoints', version: API_VERSION, description: 'Pay-per-call fee, randomness and extraction primitives. Payment is the API key: sign an EIP-3009 USDC authorization and retry.', contact: { url: 'https://github.com/NimaSalehi2/chaincost-x402' }, 'x-guidance': 'Call a paid route, receive 402 with the exact EIP-3009 USDC offer on Base, sign it, retry with X-PAYMENT (v1) or PAYMENT-SIGNATURE (v2). The response is computed before settlement, so upstream failures are free. Free companions: /health and /pricing.' },
     servers: [{ url: base }],
     components: {
       securitySchemes: {
-        x402: { type: 'apiKey', in: 'header', name: 'X-PAYMENT', description: 'Base64 JSON x402 PaymentPayload (v1), or use the v2 PAYMENT-SIGNATURE header.' },
+        public: { type: 'apiKey', in: 'header', name: 'none', description: 'Free route: no auth.' },
+        x402Payment: { type: 'apiKey', in: 'header', name: 'X-PAYMENT', description: 'Base64 JSON x402 PaymentPayload (v1), or use the v2 PAYMENT-SIGNATURE header.' },
       },
     },
     paths,
